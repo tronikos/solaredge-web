@@ -3,7 +3,7 @@
 from .solaredge import EnergyData, SolarEdgeWeb, TimeUnit
 
 __all__ = [
+    "EnergyData",
     "SolarEdgeWeb",
     "TimeUnit",
-    "EnergyData",
 ]

@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import dataclasses
-from datetime import datetime
-from enum import IntEnum
-from http.cookies import Morsel
 import json
 import logging
 import time
-from typing import Any
+from datetime import datetime
+from enum import IntEnum
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
+
+if TYPE_CHECKING:
+    from http.cookies import Morsel
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,11 +64,7 @@ class SolarEdgeWeb:
     async def async_login(self) -> None:
         """Login to the SolarEdge Web."""
         sso_cookie = self._find_cookie("SolarEdge_SSO-1.4")
-        if (
-            sso_cookie is not None
-            and time.time() - self._last_login_time
-            < int(sso_cookie["max-age"]) - 10 * 60
-        ):
+        if sso_cookie is not None and time.time() - self._last_login_time < int(sso_cookie["max-age"]) - 10 * 60:
             _LOGGER.debug("Skipping login. Using existing valid SSO cookie")
             return
         self._equipment = {}
@@ -80,8 +78,8 @@ class SolarEdgeWeb:
             )
             _LOGGER.debug("Got %s from %s", resp.status, url)
             resp.raise_for_status()
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Error during SolarEdge login: %s", err)
+        except aiohttp.ClientError:
+            _LOGGER.exception("Error during SolarEdge login")
             raise
         self._last_login_time = time.time()
 
@@ -104,14 +102,12 @@ class SolarEdgeWeb:
             resp = await self.session.get(url, timeout=self.timeout)
             _LOGGER.debug("Got %s from %s", resp.status, url)
             resp.raise_for_status()
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Error fetching equipment from %s: %s", url, err)
+        except aiohttp.ClientError:
+            _LOGGER.exception("Error fetching equipment from %s", url)
             raise
         resp_json = await resp.json()
 
-        def extract_nested_data(
-            node: dict[Any, Any], data_dict: dict[int, dict[str, Any]]
-        ) -> None:
+        def extract_nested_data(node: dict[Any, Any], data_dict: dict[int, dict[str, Any]]) -> None:
             item_data = node["data"]
             data_dict[item_data["id"]] = item_data
             for child_node in node["children"]:
@@ -120,14 +116,10 @@ class SolarEdgeWeb:
         self._equipment = {}
         for top_level_child in resp_json["logicalTree"]["children"]:
             extract_nested_data(top_level_child, self._equipment)
-        _LOGGER.debug(
-            "Found %s equipment for site: %s", len(self._equipment), self.site_id
-        )
+        _LOGGER.debug("Found %s equipment for site: %s", len(self._equipment), self.site_id)
         return self._equipment
 
-    async def async_get_energy_data(
-        self, time_unit: TimeUnit = TimeUnit.WEEK
-    ) -> list[EnergyData]:
+    async def async_get_energy_data(self, time_unit: TimeUnit = TimeUnit.WEEK) -> list[EnergyData]:
         """Get energy data from the SolarEdge Web API.
 
         Energy data is aggregated by 15 minutes, with energy values in Wh.
@@ -151,8 +143,8 @@ class SolarEdgeWeb:
             )
             _LOGGER.debug("Got %s from %s", resp.status, url)
             resp.raise_for_status()
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Error fetching energy data from %s: %s", url, err)
+        except aiohttp.ClientError:
+            _LOGGER.exception("Error fetching energy data from %s", url)
             raise
         resp_text = await resp.text()
         # The API returns a JavaScript object string, convert it to strict JSON.
@@ -170,20 +162,14 @@ class SolarEdgeWeb:
         energy_data = [
             EnergyData(
                 start_time=datetime.strptime(date_str, "%a %b %d %H:%M:%S GMT %Y"),
-                values={
-                    int(entry["key"]): float(entry["value"])
-                    for entries_list in d.values()
-                    for entry in entries_list
-                },
+                values={int(entry["key"]): float(entry["value"]) for entries_list in d.values() for entry in entries_list},
             )
             for date_str, d in resp_json["reportersData"].items()
         ]
-        _LOGGER.debug(
-            "Found %s energy data for site: %s", len(energy_data), self.site_id
-        )
+        _LOGGER.debug("Found %s energy data for site: %s", len(energy_data), self.site_id)
         return energy_data
 
-    def _find_cookie(self, name: str) -> Morsel | None:
+    def _find_cookie(self, name: str) -> Morsel[str] | None:
         """Find a cookie by name."""
         for cookie in self.session.cookie_jar:
             if cookie["domain"] == "monitoring.solaredge.com" and cookie.key == name:
